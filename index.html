@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Accident Report</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --ink: #16203A;
@@ -339,6 +339,33 @@
   }
 
   /* Honeypot — off-screen, not display:none (bots check computed style for that) */
+  /* Signature */
+  .sig-tabs { display:flex; gap:8px; margin-bottom:12px; }
+  .sig-tab {
+    padding:8px 16px; border-radius:7px; border:1.5px solid var(--line);
+    background:var(--paper); font-weight:600; font-size:13.5px; cursor:pointer; color:var(--muted);
+    font-family:'Inter', sans-serif;
+  }
+  .sig-tab.active { background:var(--slate); color:#fff; border-color:var(--slate); }
+  .sig-canvas-wrap { position:relative; }
+  .sig-canvas {
+    width:100%; height:170px; display:block;
+    border:1.5px solid var(--line); border-radius:8px; background:#fff;
+    touch-action:none; cursor:crosshair;
+  }
+  .sig-canvas-placeholder {
+    position:absolute; left:16px; bottom:14px; color:var(--muted); font-size:13px;
+    pointer-events:none; font-style:italic;
+  }
+  .sig-actions { margin-top:10px; display:flex; justify-content:flex-end; }
+  .sig-typed-input {
+    width:100%; font-family:'Dancing Script', cursive; font-size:32px;
+    padding:16px 14px 10px; border:none; border-bottom:2px solid var(--slate);
+    background:#fff; color:var(--ink); border-radius:6px 6px 0 0;
+  }
+  .sig-typed-input:focus { outline:none; border-color:var(--amber); }
+  .sig-timestamp-note { font-size:12px; color:var(--muted); margin-top:8px; }
+
   .hp-field {
     position: absolute;
     left: -9999px;
@@ -423,8 +450,8 @@
     </div>
 
     <div class="field">
-      <label>Location of Accident <span class="req">*</span></label>
-      <input type="text" id="f_location" placeholder="Building, department, or address" required>
+      <label>Physical Address/Location of Accident <span class="req">*</span></label>
+      <input type="text" id="f_location" placeholder="Full street address, or building + specific area (e.g. dock 3, aisle 12)" required>
     </div>
 
     <div class="field">
@@ -795,7 +822,7 @@
 
     <div class="btn-row">
       <button class="btn-ghost" onclick="goTo('photos')">← Back</button>
-      <button class="btn-primary" onclick="renderReview(); goTo('review')">Review Report →</button>
+      <button class="btn-primary" onclick="renderReview(); goTo('review'); initSignaturePad();">Review Report →</button>
     </div>
   </section>
 
@@ -808,6 +835,34 @@
     <div class="error-banner" id="submitError">Something went wrong submitting your report. Please try again.</div>
 
     <div id="reviewContent"></div>
+
+    <!-- Signature / Employee Acknowledgement -->
+    <div class="field" style="margin-top:22px;">
+      <label>Employee Acknowledgement <span class="req">*</span></label>
+      <p class="screen-desc" style="margin-bottom:14px;">By signing below, you confirm the information in this report is accurate to the best of your knowledge.</p>
+
+      <div class="sig-tabs">
+        <button type="button" class="sig-tab active" id="sigTabDraw" onclick="switchSignatureMode('draw')">Draw Signature</button>
+        <button type="button" class="sig-tab" id="sigTabType" onclick="switchSignatureMode('type')">Type Name</button>
+      </div>
+
+      <div id="sigDrawWrap">
+        <div class="sig-canvas-wrap">
+          <canvas id="sigCanvas" class="sig-canvas"></canvas>
+          <span class="sig-canvas-placeholder" id="sigPlaceholder">Sign here — finger or mouse</span>
+        </div>
+        <div class="sig-actions">
+          <button type="button" class="btn-secondary" onclick="clearSignature()">Clear</button>
+        </div>
+      </div>
+
+      <div id="sigTypeWrap" style="display:none;">
+        <input type="text" id="sigTypedName" class="sig-typed-input" placeholder="Type your full legal name" oninput="clearSigError()">
+      </div>
+
+      <p class="sig-timestamp-note">The date and time will be recorded automatically when you submit.</p>
+      <p class="helper-note" id="sigError" style="color:var(--danger); display:none;">Please provide a signature before submitting.</p>
+    </div>
 
     <!-- Honeypot field — real users never see or fill this -->
     <div class="hp-field" aria-hidden="true">
@@ -1186,7 +1241,7 @@ function renderReview() {
   const generalRows = [
     ['Date of Accident', val('f_accidentDate'), true],
     ['Time of Accident', val('f_accidentTime'), true],
-    ['Location', val('f_location'), true],
+    ['Physical Address/Location', val('f_location'), true],
     ['Description', val('f_description'), true],
     ['Prepared By', val('f_preparedBy'), true],
     ['Your Address', val('f_preparedByAddress')],
@@ -1307,6 +1362,85 @@ function section(title, rows, screenName) {
   </div>`;
 }
 
+/* ========= Signature ========= */
+let signatureMode = 'draw';
+let sigDrawing = false;
+let sigHasContent = false;
+let sigCanvas, sigCtx, sigInitialized = false;
+
+function initSignaturePad() {
+  if (sigInitialized) return;
+  sigCanvas = document.getElementById('sigCanvas');
+  sigCtx = sigCanvas.getContext('2d');
+
+  const rect = sigCanvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  sigCanvas.width = rect.width * ratio;
+  sigCanvas.height = rect.height * ratio;
+  sigCtx.scale(ratio, ratio);
+  sigCtx.strokeStyle = '#16203A';
+  sigCtx.lineWidth = 2.2;
+  sigCtx.lineCap = 'round';
+  sigCtx.lineJoin = 'round';
+
+  function getPos(e) {
+    const r = sigCanvas.getBoundingClientRect();
+    if (e.touches && e.touches.length) {
+      return { x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top };
+    }
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+  function startDraw(e) {
+    e.preventDefault();
+    sigDrawing = true;
+    document.getElementById('sigPlaceholder').style.display = 'none';
+    const pos = getPos(e);
+    sigCtx.beginPath();
+    sigCtx.moveTo(pos.x, pos.y);
+  }
+  function moveDraw(e) {
+    if (!sigDrawing) return;
+    e.preventDefault();
+    const pos = getPos(e);
+    sigCtx.lineTo(pos.x, pos.y);
+    sigCtx.stroke();
+    sigHasContent = true;
+    clearSigError();
+  }
+  function endDraw() { sigDrawing = false; }
+
+  sigCanvas.addEventListener('mousedown', startDraw);
+  sigCanvas.addEventListener('mousemove', moveDraw);
+  window.addEventListener('mouseup', endDraw);
+  sigCanvas.addEventListener('touchstart', startDraw, { passive: false });
+  sigCanvas.addEventListener('touchmove', moveDraw, { passive: false });
+  sigCanvas.addEventListener('touchend', endDraw);
+
+  sigInitialized = true;
+}
+function clearSignature() {
+  sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+  sigHasContent = false;
+  document.getElementById('sigPlaceholder').style.display = '';
+}
+function switchSignatureMode(mode) {
+  signatureMode = mode;
+  document.getElementById('sigTabDraw').classList.toggle('active', mode === 'draw');
+  document.getElementById('sigTabType').classList.toggle('active', mode === 'type');
+  document.getElementById('sigDrawWrap').style.display = mode === 'draw' ? '' : 'none';
+  document.getElementById('sigTypeWrap').style.display = mode === 'type' ? '' : 'none';
+  clearSigError();
+}
+function clearSigError() { document.getElementById('sigError').style.display = 'none'; }
+function hasValidSignature() {
+  if (signatureMode === 'draw') return sigHasContent;
+  return document.getElementById('sigTypedName').value.trim().length > 0;
+}
+function getSignatureData() {
+  if (signatureMode === 'draw') return sigHasContent ? sigCanvas.toDataURL('image/png') : '';
+  return document.getElementById('sigTypedName').value.trim();
+}
+
 /* ========= Turnstile ========= */
 function onTurnstileOK(token) { state.turnstileToken = token; turnstileOK = true; }
 
@@ -1323,6 +1457,13 @@ async function submitReport() {
 
   // In production, require turnstileOK before allowing submit.
   // Left permissive here since data-sitekey is a placeholder in this build.
+
+  // Signature required
+  if (!hasValidSignature()) {
+    document.getElementById('sigError').style.display = 'block';
+    document.getElementById('sigError').scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
 
   const btn = document.getElementById('submitBtn');
   btn.disabled = true;
@@ -1398,7 +1539,10 @@ async function submitReport() {
       for (let i=1;i<=count;i++) arr.push({name:val(`w${i}_name`),phone:val(`w${i}_phone`),address:val(`w${i}_address`),statement:val(`w${i}_statement`)});
       return arr;
     })(),
-    photos: state.photos.map(p => ({ name: p.name, category: p.category, contentBytes: p.dataUrl.split(',')[1] }))
+    photos: state.photos.map(p => ({ name: p.name, category: p.category, contentBytes: p.dataUrl.split(',')[1] })),
+    employeeAcknowledgement: getSignatureData(),
+    employeeAcknowledgementType: signatureMode, // 'draw' or 'type'
+    employeeAcknowledgementDate: new Date().toISOString()
   };
 
   // Replace this with your Power Automate "When an HTTP request is received" URL once step 3 is built.

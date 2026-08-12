@@ -817,7 +817,7 @@
 
     <!-- Turnstile widget mounts here — replace data-sitekey with your real Cloudflare Turnstile site key -->
     <div class="field" style="margin-top:22px;">
-      <div class="cf-turnstile" data-sitekey="YOUR_TURNSTILE_SITE_KEY" data-callback="onTurnstileOK"></div>
+      <div class="cf-turnstile" data-sitekey="0x4AAAAAAEOF0aBxLaTTiAqF" data-callback="onTurnstileOK"></div>
     </div>
 
     <div class="btn-row">
@@ -1402,7 +1402,7 @@ async function submitReport() {
   };
 
   // Replace this with your Power Automate "When an HTTP request is received" URL once step 3 is built.
-  const ENDPOINT = 'https://REPLACE_WITH_YOUR_POWER_AUTOMATE_HTTP_TRIGGER_URL';
+  const ENDPOINT = 'https://default0c07cc35444246a2a2b1a250d653b9.2f.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/01/workflows/e7c0a42b44854b72a5e97892eab5194f/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=uFdzSY04f64beLRnV65Z1Ka8vBTmb1Rj2H8rmevb5Lo';
   const isPreview = ENDPOINT.includes('REPLACE_WITH');
 
   if (isPreview) {

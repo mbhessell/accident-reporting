@@ -217,7 +217,7 @@
   .checkline .ct-label { font-weight: 600; font-size: 14.5px; color: var(--ink); }
   .checkline .ct-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 
-  .conditional { 
+  .conditional {
     max-height: 0;
     overflow: hidden;
     transition: max-height 0.25s ease;
@@ -491,7 +491,7 @@
       </div>
       <div class="field">
         <label>Your Phone Number</label>
-        <input type="tel" id="f_preparedByPhone" placeholder="Phone number of employee completing this report">
+        <input type="tel" id="f_preparedByPhone" placeholder="(228)-861-4531">
       </div>
     </div>
 
@@ -667,7 +667,7 @@
       <div class="field"><label>Driver Name</label><input type="text" id="cvdDriver_name" placeholder="Driver Name"></div>
       <div class="field-row">
         <div class="field"><label>Driver Address</label><input type="text" id="cvdDriver_address" placeholder="Driver Address"></div>
-        <div class="field"><label>Driver Phone Number</label><input type="tel" id="cvdDriver_phone" placeholder="Driver Phone Number"></div>
+        <div class="field"><label>Driver Phone Number</label><input type="tel" id="cvdDriver_phone" placeholder="(228)-861-4531"></div>
       </div>
     </div>
 
@@ -720,7 +720,7 @@
       <div class="field"><label>Employee Name</label><input type="text" id="evd_name" placeholder="Employee Name"></div>
       <div class="field-row">
         <div class="field"><label>Employee Address</label><input type="text" id="evd_address" placeholder="Employee Address"></div>
-        <div class="field"><label>Employee Phone Number</label><input type="tel" id="evd_phone" placeholder="Employee Phone Number"></div>
+        <div class="field"><label>Employee Phone Number</label><input type="tel" id="evd_phone" placeholder="(228)-861-4531"></div>
       </div>
     </div>
 
@@ -1066,16 +1066,49 @@ function handleFiles(fileList) {
       rejected.push(file.name);
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      state.photos.push({ file, dataUrl: reader.result, category, name: file.name, isPdf });
-      renderPhotoList();
-    };
-    reader.readAsDataURL(file);
+    if (isImage) {
+      // Downscale + re-compress images before they become base64 — a full-res phone
+      // photo (3-8MB) shrinks to ~100-300KB, which is most of what made Submit slow.
+      compressImage(file).then(dataUrl => {
+        state.photos.push({ file, dataUrl, category, name: file.name, isPdf: false });
+        renderPhotoList();
+      });
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.photos.push({ file, dataUrl: reader.result, category, name: file.name, isPdf: true });
+        renderPhotoList();
+      };
+      reader.readAsDataURL(file);
+    }
   });
   if (rejected.length) {
     alert('Only photos and PDF files can be attached. Not added: ' + rejected.join(', '));
   }
+}
+function compressImage(file, maxDim = 1600, quality = 0.75) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(e.target.result); // fall back to original if it fails to decode
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 function renderPhotoList() {
   const list = document.getElementById('photoList');
@@ -1098,6 +1131,21 @@ function renderPhotoList() {
   });
 }
 function removePhoto(i) { state.photos.splice(i,1); renderPhotoList(); }
+
+/* ========= Phone number formatting — forces (228)-861-4531 as the user types ========= */
+function formatPhoneNumber(value) {
+  const digits = value.replace(/\D/g, '').slice(0, 10);
+  const len = digits.length;
+  if (len === 0) return '';
+  if (len < 4) return '(' + digits;
+  if (len < 7) return '(' + digits.slice(0, 3) + ')-' + digits.slice(3);
+  return '(' + digits.slice(0, 3) + ')-' + digits.slice(3, 6) + '-' + digits.slice(6);
+}
+document.addEventListener('input', (e) => {
+  if (e.target.matches('input[type="tel"]')) {
+    e.target.value = formatPhoneNumber(e.target.value);
+  }
+});
 
 /* ========= "Same as General Info" helper (reused across Employee Injury, Company Vehicle driver, Employee Vehicle) ========= */
 function flipAndSyncSame(prefix) {
@@ -1157,7 +1205,7 @@ function renderEmployeeInjuryBlocks() {
         <div id="${prefix}_freeFields">
           <div class="field"><label>Name</label><input type="text" id="${prefix}_name" placeholder="Employee ${i} Name"></div>
           <div class="field"><label>Address</label><input type="text" id="${prefix}_address" placeholder="Employee ${i} Address"></div>
-          <div class="field"><label>Phone</label><input type="tel" id="${prefix}_phone" placeholder="Employee ${i} Phone"></div>
+          <div class="field"><label>Phone</label><input type="tel" id="${prefix}_phone" placeholder="(228)-861-4531"></div>
         </div>
         <div class="field"><label>Email</label><input type="email" id="${prefix}_email" placeholder="Employee ${i} Email"></div>
         <div class="field"><label>Body Part Injured</label><input type="text" id="${prefix}_bodyPart" placeholder="Body Part that is Injured"></div>
@@ -1168,7 +1216,7 @@ function renderEmployeeInjuryBlocks() {
         <h4>Employee ${i}</h4>
         <div class="field"><label>Name</label><input type="text" id="${prefix}_name" placeholder="Employee ${i} Name"></div>
         <div class="field"><label>Address</label><input type="text" id="${prefix}_address" placeholder="Employee ${i} Address"></div>
-        <div class="field"><label>Phone</label><input type="tel" id="${prefix}_phone" placeholder="Employee ${i} Phone"></div>
+        <div class="field"><label>Phone</label><input type="tel" id="${prefix}_phone" placeholder="(228)-861-4531"></div>
         <div class="field"><label>Email</label><input type="email" id="${prefix}_email" placeholder="Employee ${i} Email"></div>
         <div class="field"><label>Body Part Injured</label><input type="text" id="${prefix}_bodyPart" placeholder="Body Part that is Injured"></div>
         <div class="field"><label>Injury Description</label><textarea id="${prefix}_desc" placeholder="Description of Injuries"></textarea></div>
@@ -1191,7 +1239,7 @@ function renderThirdPartyInjuryBlocks() {
       <h4>Person ${i}</h4>
       <div class="field"><label>Name</label><input type="text" id="${prefix}_name" placeholder="Full Name"></div>
       <div class="field"><label>Address</label><input type="text" id="${prefix}_address" placeholder="Address"></div>
-      <div class="field"><label>Phone</label><input type="tel" id="${prefix}_phone" placeholder="Phone Number"></div>
+      <div class="field"><label>Phone</label><input type="tel" id="${prefix}_phone" placeholder="(228)-861-4531"></div>
       <div class="field"><label>Body Part Injured</label><input type="text" id="${prefix}_bodyPart" placeholder="Body Part that is Injured"></div>
       <div class="field"><label>Injury Description</label><textarea id="${prefix}_desc" placeholder="Description of injuries"></textarea></div>
     `;
@@ -1218,7 +1266,7 @@ function renderCvdPassengerBlocks() {
       <div class="field"><label>Name</label><input type="text" id="cvdp${i}_name" placeholder="Passenger ${i} Name"></div>
       <div class="field-row">
         <div class="field"><label>Address</label><input type="text" id="cvdp${i}_address" placeholder="Passenger ${i} Address"></div>
-        <div class="field"><label>Phone</label><input type="tel" id="cvdp${i}_phone" placeholder="Passenger ${i} Phone"></div>
+        <div class="field"><label>Phone</label><input type="tel" id="cvdp${i}_phone" placeholder="(228)-861-4531"></div>
       </div>
     `;
     wrap.appendChild(block);
@@ -1237,7 +1285,7 @@ function renderWitnessBlocks() {
       <h4>Witness ${i}</h4>
       <div class="field-row">
         <div class="field"><label>Name</label><input type="text" id="w${i}_name" placeholder="Witness ${i} Name"></div>
-        <div class="field"><label>Phone</label><input type="tel" id="w${i}_phone" placeholder="Witness ${i} Phone"></div>
+        <div class="field"><label>Phone</label><input type="tel" id="w${i}_phone" placeholder="(228)-861-4531"></div>
       </div>
       <div class="field"><label>Address</label><input type="text" id="w${i}_address" placeholder="Witness ${i} Address"></div>
       <div class="field"><label>Statement</label><textarea id="w${i}_statement" placeholder="Witness ${i} Statement"></textarea></div>

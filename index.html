@@ -768,23 +768,24 @@
   <!-- PHOTOS -->
   <section class="screen" data-screen="photos">
     <p class="eyebrow">Step 3</p>
-    <h2 class="screen-title">Accident Photos</h2>
-    <p class="screen-desc">Add photos of vehicle damage, property damage, injuries, skid marks, intersection views, or anything else relevant. Optional, but helpful.</p>
+    <h2 class="screen-title">Photos & Documents</h2>
+    <p class="screen-desc">Add photos of vehicle damage, property damage, injuries, skid marks, intersection views, or any related documents (e.g. a police report PDF). Optional, but helpful.</p>
 
     <div class="field">
-      <label>Photo Category (applies to next upload)</label>
+      <label>Category (applies to next upload)</label>
       <select id="photoCategory">
         <option>General / Scene</option>
         <option>Vehicle Damage</option>
         <option>Property Damage</option>
         <option>Injury</option>
+        <option>Document</option>
         <option>Other</option>
       </select>
     </div>
 
     <div class="dropzone" id="dropzone" onclick="document.getElementById('photoInput').click()">
-      <strong>Tap to add photos</strong><br>or drag files here
-      <input type="file" id="photoInput" accept="image/*" multiple style="display:none" onchange="handleFiles(this.files)">
+      <strong>Tap to add photos or PDFs</strong><br>or drag files here
+      <input type="file" id="photoInput" accept="image/*,application/pdf,.pdf" multiple style="display:none" onchange="handleFiles(this.files)">
     </div>
     <div class="photo-list" id="photoList"></div>
 
@@ -1057,14 +1058,24 @@ dropzone.addEventListener('drop', e => {
 });
 function handleFiles(fileList) {
   const category = document.getElementById('photoCategory').value;
+  const rejected = [];
   [...fileList].forEach(file => {
+    const isImage = file.type.startsWith('image/');
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isImage && !isPdf) {
+      rejected.push(file.name);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
-      state.photos.push({ file, dataUrl: reader.result, category, name: file.name });
+      state.photos.push({ file, dataUrl: reader.result, category, name: file.name, isPdf });
       renderPhotoList();
     };
     reader.readAsDataURL(file);
   });
+  if (rejected.length) {
+    alert('Only photos and PDF files can be attached. Not added: ' + rejected.join(', '));
+  }
 }
 function renderPhotoList() {
   const list = document.getElementById('photoList');
@@ -1072,11 +1083,14 @@ function renderPhotoList() {
   state.photos.forEach((p, i) => {
     const row = document.createElement('div');
     row.className = 'photo-item';
+    const thumb = p.isPdf
+      ? `<div class="thumb" style="display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--danger-deep,#B3392C);background:#FBEAE7;">PDF</div>`
+      : `<img class="thumb" src="${p.dataUrl}">`;
     row.innerHTML = `
-      <img class="thumb" src="${p.dataUrl}">
+      ${thumb}
       <span class="name">${p.name}</span>
       <select onchange="state.photos[${i}].category=this.value">
-        ${['General / Scene','Vehicle Damage','Property Damage','Injury','Other'].map(c => `<option ${c===p.category?'selected':''}>${c}</option>`).join('')}
+        ${['General / Scene','Vehicle Damage','Property Damage','Injury','Document','Other'].map(c => `<option ${c===p.category?'selected':''}>${c}</option>`).join('')}
       </select>
       <button class="rm" onclick="removePhoto(${i})">Remove</button>
     `;

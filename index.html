@@ -785,7 +785,7 @@
 
     <div class="dropzone" id="dropzone" onclick="document.getElementById('photoInput').click()">
       <strong>Tap to add photos or PDFs</strong><br>or drag files here
-      <input type="file" id="photoInput" accept="image/*,application/pdf,.pdf" multiple style="display:none" onchange="handleFiles(this.files)">
+      <input type="file" id="photoInput" accept="image/*,.heic,.heif,application/pdf,.pdf" multiple style="display:none" onchange="handleFiles(this.files)">
     </div>
     <div class="photo-list" id="photoList"></div>
 
@@ -900,6 +900,10 @@
 <footer>Submissions are reviewed by HR. For medical emergencies, call 911 first.</footer>
 
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<!-- Converts iPhone HEIC/HEIF photos to JPEG in the browser before upload — Adobe PDF
+     Services (used downstream in Power Automate) can't read HEIC directly, and most
+     non-Safari browsers can't even preview it, so this must happen client-side. -->
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script>
 /* ========= State ========= */
 const state = {
@@ -1056,15 +1060,40 @@ dropzone.addEventListener('drop', e => {
   e.preventDefault(); dropzone.classList.remove('drag');
   handleFiles(e.dataTransfer.files);
 });
-function handleFiles(fileList) {
+function isHeicFile(file) {
+  return file.type === 'image/heic' || file.type === 'image/heif' || /\.hei[cf]$/i.test(file.name);
+}
+
+// Converts a HEIC/HEIF File into a JPEG File (same content, browser-readable format).
+// Returns the original file unchanged if it isn't HEIC.
+async function convertHeicIfNeeded(file) {
+  if (!isHeicFile(file)) return file;
+  const convertedBlob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
+  const newName = file.name.replace(/\.hei[cf]$/i, '.jpg');
+  return new File([convertedBlob], newName, { type: 'image/jpeg' });
+}
+
+async function handleFiles(fileList) {
   const category = document.getElementById('photoCategory').value;
   const rejected = [];
-  [...fileList].forEach(file => {
+  const files = [...fileList];
+
+  for (let file of files) {
+    if (isHeicFile(file)) {
+      try {
+        file = await convertHeicIfNeeded(file);
+      } catch (err) {
+        console.error('HEIC conversion failed for', file.name, err);
+        rejected.push(file.name + ' (could not convert HEIC photo)');
+        continue;
+      }
+    }
+
     const isImage = file.type.startsWith('image/');
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     if (!isImage && !isPdf) {
       rejected.push(file.name);
-      return;
+      continue;
     }
     if (isImage) {
       // Downscale + re-compress images before they become base64 — a full-res phone
@@ -1081,9 +1110,9 @@ function handleFiles(fileList) {
       };
       reader.readAsDataURL(file);
     }
-  });
+  }
   if (rejected.length) {
-    alert('Only photos and PDF files can be attached. Not added: ' + rejected.join(', '));
+    alert('Some files could not be added: ' + rejected.join(', '));
   }
 }
 function compressImage(file, maxDim = 1600, quality = 0.75) {

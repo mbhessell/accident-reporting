@@ -386,6 +386,43 @@
     font-size: 12.5px; color: var(--muted); margin-top: 6px;
   }
 
+  /* Employee directory search (typeahead) */
+  .emp-ac-spinner {
+    position: absolute; right: 12px; top: 39px;
+    width: 15px; height: 15px; border: 2px solid var(--line); border-top-color: var(--slate-light);
+    border-radius: 50%; animation: emp-ac-spin 0.6s linear infinite; display: none; pointer-events: none;
+  }
+  .emp-ac-spinner.show { display: block; }
+  @keyframes emp-ac-spin { to { transform: rotate(360deg); } }
+  .emp-ac-dropdown {
+    position: absolute; z-index: 40; background: var(--card); border: 1.5px solid var(--line);
+    border-radius: 8px; box-shadow: var(--shadow); max-height: 220px; overflow-y: auto;
+    display: none;
+  }
+  .emp-ac-dropdown.show { display: block; }
+  .emp-ac-item { padding: 9px 13px; cursor: pointer; font-size: 14px; border-bottom: 1px solid var(--line); }
+  .emp-ac-item:last-child { border-bottom: none; }
+  .emp-ac-item:hover, .emp-ac-item.active { background: #EEF1F7; }
+  .emp-ac-item .n { font-weight: 600; color: var(--ink); }
+  .emp-ac-item .d { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .emp-ac-empty, .emp-ac-error { padding: 10px 13px; font-size: 13px; color: var(--muted); font-style: italic; }
+  .emp-ac-error { color: var(--danger); font-style: normal; }
+  input.auto-filled { background: #EEF6F1; border-color: var(--success); }
+  input.emp-locked:disabled { color: var(--ink); opacity: 1; cursor: not-allowed; padding-right: 34px; }
+  .emp-match-note { color: var(--success) !important; }
+  /* Per-field "this is good" checkmark, shown on every individual locked field (not
+     just once near the name) — see wrapForBadge/showFieldCheck/hideFieldCheck. */
+  .emp-field-wrap { position: relative; display: block; }
+  .emp-check-badge {
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    color: var(--success); font-weight: 700; font-size: 15px; pointer-events: none;
+  }
+  .emp-unlock-btn {
+    background: none; border: none; padding: 0; margin-left: 2px;
+    color: var(--slate-light); font-weight: 600; font-size: 12.5px;
+    text-decoration: underline; cursor: pointer; font-family: 'Inter', sans-serif;
+  }
+
   footer {
     margin-top: 28px;
     font-size: 12px;
@@ -494,6 +531,7 @@
         <input type="tel" id="f_preparedByPhone" placeholder="(228)-861-4531">
       </div>
     </div>
+
 
     <div class="checkline" id="policeCalledWrap" onclick="toggleCheck('f_policeCalled', this)">
       <input type="checkbox" id="f_policeCalled" onclick="event.stopPropagation(); onPoliceToggle()">
@@ -785,7 +823,7 @@
 
     <div class="dropzone" id="dropzone" onclick="document.getElementById('photoInput').click()">
       <strong>Tap to add photos or PDFs</strong><br>or drag files here
-      <input type="file" id="photoInput" accept="image/*,.heic,.heif,application/pdf,.pdf" multiple style="display:none" onchange="handleFiles(this.files)">
+      <input type="file" id="photoInput" accept="image/*,application/pdf,.pdf" multiple style="display:none" onchange="handleFiles(this.files)">
     </div>
     <div class="photo-list" id="photoList"></div>
 
@@ -900,10 +938,6 @@
 <footer>Submissions are reviewed by HR. For medical emergencies, call 911 first.</footer>
 
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-<!-- Converts iPhone HEIC/HEIF photos to JPEG in the browser before upload — Adobe PDF
-     Services (used downstream in Power Automate) can't read HEIC directly, and most
-     non-Safari browsers can't even preview it, so this must happen client-side. -->
-<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script>
 /* ========= State ========= */
 const state = {
@@ -1060,40 +1094,15 @@ dropzone.addEventListener('drop', e => {
   e.preventDefault(); dropzone.classList.remove('drag');
   handleFiles(e.dataTransfer.files);
 });
-function isHeicFile(file) {
-  return file.type === 'image/heic' || file.type === 'image/heif' || /\.hei[cf]$/i.test(file.name);
-}
-
-// Converts a HEIC/HEIF File into a JPEG File (same content, browser-readable format).
-// Returns the original file unchanged if it isn't HEIC.
-async function convertHeicIfNeeded(file) {
-  if (!isHeicFile(file)) return file;
-  const convertedBlob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
-  const newName = file.name.replace(/\.hei[cf]$/i, '.jpg');
-  return new File([convertedBlob], newName, { type: 'image/jpeg' });
-}
-
-async function handleFiles(fileList) {
+function handleFiles(fileList) {
   const category = document.getElementById('photoCategory').value;
   const rejected = [];
-  const files = [...fileList];
-
-  for (let file of files) {
-    if (isHeicFile(file)) {
-      try {
-        file = await convertHeicIfNeeded(file);
-      } catch (err) {
-        console.error('HEIC conversion failed for', file.name, err);
-        rejected.push(file.name + ' (could not convert HEIC photo)');
-        continue;
-      }
-    }
-
+  [...fileList].forEach(file => {
     const isImage = file.type.startsWith('image/');
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     if (!isImage && !isPdf) {
       rejected.push(file.name);
-      continue;
+      return;
     }
     if (isImage) {
       // Downscale + re-compress images before they become base64 — a full-res phone
@@ -1110,9 +1119,9 @@ async function handleFiles(fileList) {
       };
       reader.readAsDataURL(file);
     }
-  }
+  });
   if (rejected.length) {
-    alert('Some files could not be added: ' + rejected.join(', '));
+    alert('Only photos and PDF files can be attached. Not added: ' + rejected.join(', '));
   }
 }
 function compressImage(file, maxDim = 1600, quality = 0.75) {
@@ -1190,8 +1199,16 @@ function toggleSameAsGeneral(prefix) {
   const free = document.getElementById(prefix + '_freeFields');
   if (cb.checked) {
     document.getElementById(prefix + '_name_display').value = val('f_preparedBy');
-    document.getElementById(prefix + '_address_display').value = val('f_preparedByAddress');
-    document.getElementById(prefix + '_phone_display').value = val('f_preparedByPhone');
+    // Address/Phone show blank here whenever the preparer's own fields are locked to
+    // a directory match (they're completed server-side, never shown in the browser —
+    // see selectEmployee()) — a placeholder makes that read as "pending", not broken.
+    const pendingNote = 'On file — completed automatically at submission';
+    const addrDisplay = document.getElementById(prefix + '_address_display');
+    const phoneDisplay = document.getElementById(prefix + '_phone_display');
+    addrDisplay.value = val('f_preparedByAddress');
+    addrDisplay.placeholder = document.getElementById('f_preparedByAddress').classList.contains('emp-locked') ? pendingNote : '';
+    phoneDisplay.value = val('f_preparedByPhone');
+    phoneDisplay.placeholder = document.getElementById('f_preparedByPhone').classList.contains('emp-locked') ? pendingNote : '';
     pre.style.display = '';
     free.style.display = 'none';
   } else {
@@ -1207,6 +1224,23 @@ function sameOrFree(prefix, field) {
     if (field === 'phone') return val('f_preparedByPhone');
   }
   return val(prefix + '_' + field);
+}
+// Whether nameInputId currently has a locked employee-directory match, for threading
+// directoryMatched/directoryId into the submission payload alongside the corresponding
+// name/address/phone — so the backend can independently look up and fill in that
+// person's Address/Phone/etc. at submission, the same way it already does for the
+// report preparer.
+function matchInfo(nameInputId) {
+  const m = empMatchedRecords[nameInputId];
+  return { matched: !!m, id: (m && m.id) || '' };
+}
+// Same as matchInfo, but follows the "same as general" checkbox the way sameOrFree()
+// does for the field values themselves — if prefix is filed as "same employee as the
+// report preparer", its match info is the preparer's match info.
+function sameOrFreeMatch(prefix) {
+  const cb = document.getElementById(prefix + '_sameAsGeneral');
+  if (cb && cb.checked) return matchInfo('f_preparedBy');
+  return matchInfo(prefix + '_name');
 }
 
 /* ========= Employee Injury (dynamic, up to 4 employees — only #1 gets "same as general" since only one person fills out the form) ========= */
@@ -1575,6 +1609,8 @@ async function submitReport() {
     employeeAddress: val('f_preparedByAddress'),
     employeePhone: val('f_preparedByPhone'),
     supervisorName: val('f_supervisor'),
+    employeeDirectoryMatched: !!empMatchedRecords['f_preparedBy'],
+    employeeDirectoryId: (empMatchedRecords['f_preparedBy'] && empMatchedRecords['f_preparedBy'].id) || '',
     department: val('f_department'),
     policeCalled: document.getElementById('f_policeCalled').checked,
     policeAgency: val('f_policeAgency'),
@@ -1594,7 +1630,8 @@ async function submitReport() {
       const arr = [];
       for (let i=1;i<=count;i++) {
         const p = `ei${i}`;
-        arr.push({name:sameOrFree(p,'name'),address:sameOrFree(p,'address'),phone:sameOrFree(p,'phone'),email:val(`${p}_email`),bodyPart:val(`${p}_bodyPart`),description:val(`${p}_desc`)});
+        const m = sameOrFreeMatch(p);
+        arr.push({name:sameOrFree(p,'name'),address:sameOrFree(p,'address'),phone:sameOrFree(p,'phone'),email:val(`${p}_email`),bodyPart:val(`${p}_bodyPart`),description:val(`${p}_desc`),directoryMatched:m.matched,directoryId:m.id});
       }
       return arr;
     })() : null,
@@ -1610,24 +1647,31 @@ async function submitReport() {
     companyVehicleDamageDetails: state.types.companyVehicleDamage ? {
       unit:val('cvd_unit'), year:val('cvd_year'), make:val('cvd_make'), model:val('cvd_model'),
       driver:sameOrFree('cvdDriver','name'), driverAddress:sameOrFree('cvdDriver','address'), driverPhone:sameOrFree('cvdDriver','phone'),
+      driverDirectoryMatched: sameOrFreeMatch('cvdDriver').matched, driverDirectoryId: sameOrFreeMatch('cvdDriver').id,
       description:val('cvd_desc'),
       passengersPresent: document.getElementById('cvd_passengersPresent').checked,
       passengers: (() => {
         if (!document.getElementById('cvd_passengersPresent').checked) return [];
         const n = parseInt(document.getElementById('cvdPassengerCount').value, 10);
         const arr = [];
-        for (let i=1;i<=n;i++) arr.push({name:val(`cvdp${i}_name`),address:val(`cvdp${i}_address`),phone:val(`cvdp${i}_phone`)});
+        for (let i=1;i<=n;i++) {
+          const m = matchInfo(`cvdp${i}_name`);
+          arr.push({name:val(`cvdp${i}_name`),address:val(`cvdp${i}_address`),phone:val(`cvdp${i}_phone`),directoryMatched:m.matched,directoryId:m.id});
+        }
         return arr;
       })()
     } : null,
-    employeeVehicleDamageDetails: state.types.employeeVehicleDamage ? {name:sameOrFree('evd','name'),address:sameOrFree('evd','address'),phone:sameOrFree('evd','phone'),vehicle:val('evd_vehicle'),description:val('evd_desc')} : null,
+    employeeVehicleDamageDetails: state.types.employeeVehicleDamage ? {name:sameOrFree('evd','name'),address:sameOrFree('evd','address'),phone:sameOrFree('evd','phone'),directoryMatched:sameOrFreeMatch('evd').matched,directoryId:sameOrFreeMatch('evd').id,vehicle:val('evd_vehicle'),description:val('evd_desc')} : null,
     thirdPartyVehicleDamageDetails: state.types.thirdPartyVehicleDamage ? {name:val('tpvd_name'),vehicle:val('tpvd_vehicle'),insuranceCompany:val('tpvd_insuranceCompany'),insurancePolicyNumber:val('tpvd_insurancePolicy'),description:val('tpvd_desc')} : null,
     propertyDamageDetails: state.types.propertyDamage ? {property:val('pd_property'),description:val('pd_desc')} : null,
     witnesses: (() => {
       if (!document.getElementById('f_witnessPresent').checked) return [];
       const count = parseInt(document.getElementById('witnessCount').value, 10);
       const arr = [];
-      for (let i=1;i<=count;i++) arr.push({name:val(`w${i}_name`),phone:val(`w${i}_phone`),address:val(`w${i}_address`),statement:val(`w${i}_statement`)});
+      for (let i=1;i<=count;i++) {
+        const m = matchInfo(`w${i}_name`);
+        arr.push({name:val(`w${i}_name`),phone:val(`w${i}_phone`),address:val(`w${i}_address`),statement:val(`w${i}_statement`),directoryMatched:m.matched,directoryId:m.id});
+      }
       return arr;
     })(),
     photos: state.photos.map(p => ({ name: p.name, category: p.category, contentBytes: p.dataUrl.split(',')[1] })),
@@ -1665,6 +1709,385 @@ async function submitReport() {
     btn.textContent = 'Submit Accident Report';
   }
 }
+
+/* ========= Employee Directory Search (Power Automate) =========
+   Wired to the "Employee Search" flow's HTTP trigger. Typing a name into any of the
+   fields below triggers a debounced search; picking a result locks whichever of
+   Address / Phone / Email that person's directory record has on file (each field only
+   applies to the screens that actually collect it — see empFieldTargets) plus, where
+   collected, Supervisor.
+
+   PII DESIGN — this is the important part. Address/Phone/Email are NEVER sent to the
+   browser at all, matched or not. The search response only carries has<Field> booleans
+   (hasAddress/hasPhone/hasEmail) saying whether the directory has each on file — not the
+   values themselves. On a match, selectEmployee() uses those booleans to decide which
+   fields to lock (disabled, greyed, "On file — completed automatically at submission"
+   placeholder) but writes nothing real into them. The actual values are filled in
+   server-side, at submission time, by the Accident Report Intake flow, which looks the
+   matched person back up by directoryId against the Employee Directory SharePoint list.
+   This means nobody — including a coworker or visitor just poking at the search box —
+   can extract another employee's home address or phone number simply by typing their
+   name, the way they could if the search response carried the real values. Supervisor
+   name is the one exception treated as non-sensitive and shown directly on match.
+
+   A field the directory has no value for (e.g. no phone on file) is left open for hand
+   entry, same as an unmatched name — a non-employee witness, a new hire not in the sync
+   yet — which just stays a normal free-text field, exactly like before this feature
+   existed. Editing a locked field's name away from the matched value unlocks it
+   automatically; the "Not this person? Edit manually" link does the same on demand.
+
+   Every screen this is wired to (the preparer's "Your Full Name", Employee Injury
+   entries, Employee/Company Vehicle Damage driver, Company Vehicle passengers,
+   Witnesses) sends directoryMatched + directoryId alongside that person's other fields
+   in the submission payload (see matchInfo/sameOrFreeMatch and their call sites in
+   submitReport()), so the backend can look each of them up independently — not just the
+   preparer. As of 2026-09-04 the Accident Report Intake flow only actually DOES that
+   lookup-and-fill for the preparer's SupervisorName/Department/EmployeePhone/
+   EmployeeAddress (via a Get items + coalesce() pattern on Create Item); extending the
+   same treatment to vehicle-damage drivers/passengers/witnesses/injury entries is
+   still pending — those sections are currently written to SharePoint as raw JSON blobs
+   rather than individual columns, so backfilling them server-side needs a Get items
+   lookup nested inside a loop over each array rather than a single coalesce. The payload
+   already carries everything the backend needs to do this (directoryMatched/directoryId
+   on every entry) — the remaining work is entirely in Power Automate.
+
+   Request sent: POST { searchTerm: "<partial name>" } — confirmed against the live
+   "Employee Search" flow's Get items filter (substringof(searchTerm, Title)) on 2026-09-04.
+   Response accepted in any of these shapes: a bare array, or { value: [...] } /
+   { results: [...] } / { employees: [...] }. Each record's fields are matched against
+   several common name variants (see normalizeEmployee) — if the real flow uses different
+   field names, adjust the `pick(...)` lists below rather than the rest of this code.
+
+   As of 2026-09-04 the live flow's Select step projects employeeName, paycorEmployeeId,
+   department, location, supervisorName, plus hasAddress/hasPhone/hasEmail booleans
+   computed from Street/Phone/Email — it does NOT return the raw Street/City/State/Zip/
+   Phone/Email values themselves, by design (see PII DESIGN above).
+   A console warning fires if a record has no recognizable name field, so a mismatch
+   is easy to spot while testing. */
+const EMPLOYEE_SEARCH_ENDPOINT = 'https://default0c07cc35444246a2a2b1a250d653b9.2f.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/25/workflows/2936480bf8b342459fe47cb172b955ff/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=Z2TXUOMAuZE7FHjhT1_-oQrvkVLL69rjUIuVrpG38Iw';
+const EMP_SEARCH_MIN_CHARS = 2;
+const EMP_SEARCH_DEBOUNCE_MS = 300;
+// Set true to bypass the live flow and search this local list instead — handy for testing
+// the UI before/without hitting the real endpoint.
+const EMP_SEARCH_USE_MOCK = false;
+// Mock records deliberately carry only has<Field> booleans, never actual address/phone/
+// email values — matching exactly what the real flow's response looks like now that it's
+// been trimmed to stop exposing that data to the browser. Toggle EMP_SEARCH_USE_MOCK to
+// exercise the lock-without-populate UI without hitting the live endpoint.
+const EMP_SEARCH_MOCK = [
+  { name: 'Alex Rivera', hasAddress: true, hasPhone: true, hasEmail: true, department: 'Warehouse', supervisor: 'Dana Whitfield' },
+  { name: 'Alexis Turner', hasAddress: true, hasPhone: false, hasEmail: true, department: 'Delivery', supervisor: 'Marcus Bell' },
+  { name: 'Jordan Blake', hasAddress: false, hasPhone: true, hasEmail: true, department: 'Warehouse', supervisor: 'Dana Whitfield' }
+];
+
+// Which fields to populate for a given Name input's id. Covers the main "Your Full Name"
+// field, the free-text employee-name fields in Employee Injury / Employee Vehicle Damage /
+// Company Vehicle driver, Company Vehicle passengers, and Witnesses (a passenger or witness
+// is often a coworker, so they can show up in the directory too — but just as often isn't,
+// which is why every field below stays a plain, always-editable text input: no match just
+// means nothing gets filled in and the person types it in by hand). Third-party injury and
+// third-party vehicle owner fields are intentionally excluded — those are by definition not
+// FEB/CCB employees.
+function empFieldTargets(nameInputId) {
+  if (nameInputId === 'f_preparedBy') {
+    return { address: 'f_preparedByAddress', phone: 'f_preparedByPhone', supervisor: 'f_supervisor' };
+  }
+  let m = nameInputId.match(/^ei(\d+)_name$/);
+  if (m) return { address: `ei${m[1]}_address`, phone: `ei${m[1]}_phone`, email: `ei${m[1]}_email` };
+  if (nameInputId === 'evd_name') return { address: 'evd_address', phone: 'evd_phone' };
+  if (nameInputId === 'cvdDriver_name') return { address: 'cvdDriver_address', phone: 'cvdDriver_phone' };
+  m = nameInputId.match(/^w(\d+)_name$/);
+  if (m) return { address: `w${m[1]}_address`, phone: `w${m[1]}_phone` };
+  m = nameInputId.match(/^cvdp(\d+)_name$/);
+  if (m) return { address: `cvdp${m[1]}_address`, phone: `cvdp${m[1]}_phone` };
+  return null;
+}
+
+function pick(obj, keys) {
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
+  }
+  return '';
+}
+function normalizeEmployee(rec) {
+  const id = pick(rec, ['id','Id','ID','employeeId','EmployeeId','EmployeeID','paycorEmployeeId','PaycorEmployeeId','PaycorEmployeeID']);
+  const name = pick(rec, ['name','Name','FullName','fullName','EmployeeName','employeeName']);
+  const supervisor = pick(rec, ['supervisor','Supervisor','SupervisorName','supervisorName','Manager','manager','ManagerName']);
+  const department = pick(rec, ['department','Department']);
+  // Deliberately NOT reading actual address/phone/email values here. The search
+  // response only tells us whether the directory HAS each one on file (booleans) —
+  // the real values never reach the browser at all. They're filled in server-side,
+  // at submission time, from the matched employee id. See hasAddress/hasPhone/hasEmail
+  // below, and selectEmployee()'s use of them.
+  const truthy = v => v === true || v === 'true' || v === 1 || v === '1';
+  const hasAddress = truthy(pick(rec, ['hasAddress','HasAddress']));
+  const hasPhone = truthy(pick(rec, ['hasPhone','HasPhone']));
+  const hasEmail = truthy(pick(rec, ['hasEmail','HasEmail']));
+  if (!name) console.warn('Employee search: record has no recognizable name field — check field names against the real flow response.', rec);
+  return { id, name, supervisor, department, hasAddress, hasPhone, hasEmail, _raw: rec };
+}
+
+let empSearchController = null;
+let empSearchTimer = null;
+let empSearchResults = [];
+let empSearchActiveIndex = -1;
+let empSearchActiveInputId = null;
+let empMatchedRecords = {}; // nameInputId -> last-matched record (cleared if the name is edited afterward)
+
+const empDropdown = document.createElement('div');
+empDropdown.className = 'emp-ac-dropdown';
+empDropdown.id = 'empSearchDropdown';
+document.body.appendChild(empDropdown);
+
+function positionEmpDropdown(input) {
+  const r = input.getBoundingClientRect();
+  empDropdown.style.left = (r.left + window.scrollX) + 'px';
+  empDropdown.style.top = (r.bottom + window.scrollY + 4) + 'px';
+  empDropdown.style.width = r.width + 'px';
+}
+function hideEmpDropdown() {
+  empDropdown.classList.remove('show');
+  empDropdown.innerHTML = '';
+  empSearchResults = [];
+  empSearchActiveIndex = -1;
+  empSearchActiveInputId = null;
+}
+function renderEmpDropdown(input, opts = {}) {
+  empDropdown.innerHTML = '';
+  if (opts.error) {
+    empDropdown.innerHTML = '<div class="emp-ac-error">Employee search is unavailable right now.</div>';
+  } else if (empSearchResults.length === 0) {
+    empDropdown.innerHTML = '<div class="emp-ac-empty">No matching employees</div>';
+  } else {
+    empSearchResults.forEach((emp, i) => {
+      const item = document.createElement('div');
+      item.className = 'emp-ac-item' + (i === empSearchActiveIndex ? ' active' : '');
+      // Deliberately only non-sensitive context here (supervisor, department) — address/
+      // phone/email never reach the browser, so there's nothing sensitive to show or hide.
+      const sub = [emp.supervisor ? ('Supervisor: ' + emp.supervisor) : '', emp.department || ''].filter(Boolean).join(' · ');
+      item.innerHTML = `<div class="n"></div>${sub ? `<div class="d"></div>` : ''}`;
+      item.querySelector('.n').textContent = emp.name;
+      if (sub) item.querySelector('.d').textContent = sub;
+      item.onmousedown = (e) => { e.preventDefault(); selectEmployee(input, emp); };
+      empDropdown.appendChild(item);
+    });
+  }
+  positionEmpDropdown(input);
+  empDropdown.classList.add('show');
+}
+
+async function searchEmployees(query) {
+  if (empSearchController) empSearchController.abort();
+  empSearchController = new AbortController();
+
+  if (EMP_SEARCH_USE_MOCK) {
+    const q = query.toLowerCase();
+    return EMP_SEARCH_MOCK.filter(e => e.name.toLowerCase().includes(q)).map(normalizeEmployee);
+  }
+
+  const res = await fetch(EMPLOYEE_SEARCH_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ searchTerm: query }),
+    signal: empSearchController.signal
+  });
+  if (!res.ok) throw new Error('Employee search failed: ' + res.status);
+  const json = await res.json();
+  const list = Array.isArray(json) ? json : (json.value || json.results || json.employees || []);
+  return list.map(normalizeEmployee);
+}
+
+function onEmpNameInput(e) {
+  const input = e.target;
+  const targets = empFieldTargets(input.id);
+  if (!targets) return;
+
+  clearAutoFillNote(input);
+  // If the name no longer matches what was selected, the locked fields are now stale — unlock them.
+  if (empMatchedRecords[input.id] && empMatchedRecords[input.id].name !== input.value) {
+    unlockEmpFields(input);
+  }
+
+  clearTimeout(empSearchTimer);
+  const query = input.value.trim();
+  empSearchActiveInputId = input.id;
+
+  if (query.length < EMP_SEARCH_MIN_CHARS) { hideEmpDropdown(); return; }
+
+  empSearchTimer = setTimeout(async () => {
+    try {
+      const results = await searchEmployees(query);
+      if (empSearchActiveInputId !== input.id) return; // user moved to a different field
+      empSearchResults = results.slice(0, 8);
+      empSearchActiveIndex = -1;
+      renderEmpDropdown(input);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      console.warn('Employee search error:', err);
+      if (empSearchActiveInputId === input.id) renderEmpDropdown(input, { error: true });
+    }
+  }, EMP_SEARCH_DEBOUNCE_MS);
+}
+
+// Fields never populated with real data in the browser — the search response only
+// tells us whether the directory has each one on file (emp.has<Field>). The actual
+// value is filled in server-side, at submission time, from the matched employee id
+// (employeeDirectoryId in the payload), so home addresses/phone numbers are never
+// exposed just by typing a name into the search box.
+const SENSITIVE_MATCH_FIELDS = ['address', 'phone', 'email'];
+
+// Wraps el in a small positioned span (once — safe to call repeatedly) so an absolutely-
+// positioned checkmark badge can sit inside its input box without touching the static
+// markup for every field this feature applies to.
+function wrapForBadge(el) {
+  if (el.parentElement && el.parentElement.classList.contains('emp-field-wrap')) {
+    return el.parentElement;
+  }
+  const wrap = document.createElement('span');
+  wrap.className = 'emp-field-wrap';
+  el.parentElement.insertBefore(wrap, el);
+  wrap.appendChild(el);
+  return wrap;
+}
+// Shows a green ✓ badge inside el's own box — the per-field "this is good" indicator,
+// distinct from the one-time "✓ Matched from employee directory" note under the name.
+function showFieldCheck(el) {
+  const wrap = wrapForBadge(el);
+  let badge = wrap.querySelector('.emp-check-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'emp-check-badge';
+    badge.textContent = '✓';
+    badge.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(badge);
+  }
+  badge.style.display = '';
+}
+function hideFieldCheck(el) {
+  const wrap = el.parentElement;
+  if (!wrap || !wrap.classList.contains('emp-field-wrap')) return;
+  const badge = wrap.querySelector('.emp-check-badge');
+  if (badge) badge.style.display = 'none';
+}
+
+function selectEmployee(input, emp) {
+  const targets = empFieldTargets(input.id);
+  if (!targets) return;
+  input.value = emp.name;
+  Object.keys(targets).forEach(f => {
+    const targetId = targets[f];
+    const el = document.getElementById(targetId);
+    if (!el) return;
+    if (SENSITIVE_MATCH_FIELDS.includes(f)) {
+      // Only lock a field the directory actually has a value for (per the has<Field>
+      // flags) — anything genuinely missing from the directory record stays open for
+      // hand entry, same as an unmatched name. Locked fields are left BLANK here;
+      // they're completed by the backend at submission, never shown in the browser.
+      const hasFlag = emp['has' + f.charAt(0).toUpperCase() + f.slice(1)];
+      if (hasFlag) {
+        if (!('empOrigPlaceholder' in el.dataset)) el.dataset.empOrigPlaceholder = el.placeholder || '';
+        el.value = '';
+        el.placeholder = 'On file — completed automatically at submission';
+        el.classList.add('auto-filled', 'emp-locked');
+        el.disabled = true;
+        showFieldCheck(el);
+      }
+    } else {
+      // Non-sensitive fields (e.g. supervisor) are safe to show directly.
+      if (emp[f]) {
+        el.value = emp[f];
+        el.classList.add('auto-filled', 'emp-locked');
+        el.disabled = true;
+        showFieldCheck(el);
+      }
+    }
+  });
+  empMatchedRecords[input.id] = emp;
+  showAutoFillNote(input);
+  hideEmpDropdown();
+}
+
+// Re-opens whichever target fields selectEmployee() locked for this name input, without
+// touching whatever value is currently sitting in them (so unlocking to fix one field
+// doesn't wipe out the others).
+function unlockEmpFields(input) {
+  const targets = empFieldTargets(input.id);
+  if (targets) {
+    Object.keys(targets).forEach(f => {
+      const targetId = targets[f];
+      const el = document.getElementById(targetId);
+      if (!el) return;
+      el.disabled = false;
+      el.classList.remove('auto-filled', 'emp-locked');
+      if ('empOrigPlaceholder' in el.dataset) {
+        el.placeholder = el.dataset.empOrigPlaceholder;
+        delete el.dataset.empOrigPlaceholder;
+      }
+      hideFieldCheck(el);
+    });
+  }
+  delete empMatchedRecords[input.id];
+  clearAutoFillNote(input);
+}
+
+function showAutoFillNote(input) {
+  clearAutoFillNote(input);
+  const field = input.closest('.field');
+  if (!field) return;
+  const note = document.createElement('p');
+  note.className = 'helper-note emp-match-note';
+  note.textContent = '✓ Matched from employee directory — locked fields will be completed automatically when this report is submitted. ';
+  const unlockBtn = document.createElement('button');
+  unlockBtn.type = 'button';
+  unlockBtn.className = 'emp-unlock-btn';
+  unlockBtn.textContent = 'Not this person? Edit manually';
+  unlockBtn.onclick = () => unlockEmpFields(input);
+  note.appendChild(unlockBtn);
+  field.appendChild(note);
+}
+function clearAutoFillNote(input) {
+  const field = input.closest('.field');
+  if (!field) return;
+  const existing = field.querySelector('.emp-match-note');
+  if (existing) existing.remove();
+}
+
+document.addEventListener('input', onEmpNameInput);
+// A manual edit to a previously auto-filled field means it may no longer match the directory —
+// drop the "matched" styling (the value itself is left alone).
+document.addEventListener('input', (e) => {
+  if (e.target.classList && e.target.classList.contains('auto-filled') && !empFieldTargets(e.target.id)) {
+    e.target.classList.remove('auto-filled');
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (!empDropdown.classList.contains('show')) return;
+  const input = document.getElementById(empSearchActiveInputId);
+  if (!input || document.activeElement !== input) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    empSearchActiveIndex = Math.min(empSearchActiveIndex + 1, empSearchResults.length - 1);
+    renderEmpDropdown(input);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    empSearchActiveIndex = Math.max(empSearchActiveIndex - 1, 0);
+    renderEmpDropdown(input);
+  } else if (e.key === 'Enter') {
+    if (empSearchActiveIndex >= 0 && empSearchResults[empSearchActiveIndex]) {
+      e.preventDefault();
+      selectEmployee(input, empSearchResults[empSearchActiveIndex]);
+    }
+  } else if (e.key === 'Escape') {
+    hideEmpDropdown();
+  }
+});
+document.addEventListener('focusout', (e) => {
+  if (empFieldTargets(e.target.id)) {
+    setTimeout(() => { if (!empDropdown.matches(':hover')) hideEmpDropdown(); }, 120);
+  }
+});
+window.addEventListener('scroll', () => { if (empSearchActiveInputId) hideEmpDropdown(); }, true);
+window.addEventListener('resize', () => { if (empSearchActiveInputId) hideEmpDropdown(); });
 
 /* ========= Init ========= */
 renderEmployeeInjuryBlocks();

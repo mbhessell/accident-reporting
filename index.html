@@ -2131,7 +2131,12 @@ function isAddrField(el) {
 
 // "Street, City, ST 12345" — same shape the backend writes for directory matches.
 function formatAddr(r) {
-  const line1 = r.address_line1 || [r.housenumber, r.street].filter(Boolean).join(' ');
+  // Prefer the real street address; for a named place (e.g. a business) keep the name in
+  // front of it, so "Acme Warehouse, 123 Main St, ..." instead of just "Acme Warehouse, ...".
+  const street = [r.housenumber, r.street].filter(Boolean).join(' ');
+  const line1 = street
+    ? ((r.name && r.name !== street && r.name !== r.street) ? r.name + ', ' + street : street)
+    : (r.address_line1 || r.name || '');
   const stZip = [r.state_code || r.state, r.postcode].filter(Boolean).join(' ');
   const parts = [line1, r.city || r.town || r.village, stZip].filter(Boolean);
   // address_line1 can already be the city for city-level results — avoid "Dallas, Dallas, TX"

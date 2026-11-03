@@ -2089,6 +2089,157 @@ document.addEventListener('focusout', (e) => {
 window.addEventListener('scroll', () => { if (empSearchActiveInputId) hideEmpDropdown(); }, true);
 window.addEventListener('resize', () => { if (empSearchActiveInputId) hideEmpDropdown(); });
 
+/* ========= Address autocomplete (Geoapify) =========
+   Suggests real US addresses as the user types into any hand-entered address field
+   (accident location, preparer address, and every driver/passenger/witness/injured-person
+   address, including the blocks rendered dynamically). Suggestions are optional — the
+   user can always ignore them and type freely (e.g. "Dock 3, aisle 12").
+
+   PII note: this only ever runs on fields the user is actively typing into. Fields locked
+   to an employee-directory match are disabled and blank, so nothing from the directory is
+   ever sent to Geoapify — only what the person typed by hand.
+
+   SETUP: paste the API key from myprojects.geoapify.com → "Accident Reporting" project →
+   API keys. In that project's API key settings, restrict the key to this site's domain
+   (allowed origins / HTTP referrers) so it can't be reused elsewhere — the key is
+   visible in page source by nature, same as any browser-side map key. */
+const GEOAPIFY_API_KEY = 'YOUR_GEOAPIFY_KEY';
+const ADDR_AC_MIN_CHARS = 4;        // don't search until there's something meaningful
+const ADDR_AC_DEBOUNCE_MS = 400;    // wait for a pause in typing — keeps credit use low
+const ADDR_AC_LIMIT = 5;
+const ADDR_AC_FILTER = 'countrycode:us';
+
+let addrAcController = null;
+let addrAcTimer = null;
+let addrAcResults = [];
+let addrAcActiveIndex = -1;
+let addrAcActiveInputId = null;
+
+const addrDropdown = document.createElement('div');
+addrDropdown.className = 'emp-ac-dropdown';   // reuse the employee-search dropdown styling
+addrDropdown.id = 'addrSearchDropdown';
+addrDropdown.setAttribute('role', 'listbox');
+document.body.appendChild(addrDropdown);
+
+function isAddrField(el) {
+  if (!el || el.tagName !== 'INPUT' || el.disabled || el.readOnly) return false;
+  if (!GEOAPIFY_API_KEY || GEOAPIFY_API_KEY === 'YOUR_GEOAPIFY_KEY') return false;
+  const id = el.id || '';
+  if (id.endsWith('_address_display')) return false;
+  return id === 'f_location' || id === 'f_preparedByAddress' || id.endsWith('_address');
+}
+
+// "Street, City, ST 12345" — same shape the backend writes for directory matches.
+function formatAddr(r) {
+  const line1 = r.address_line1 || [r.housenumber, r.street].filter(Boolean).join(' ');
+  const stZip = [r.state_code || r.state, r.postcode].filter(Boolean).join(' ');
+  const parts = [line1, r.city || r.town || r.village, stZip].filter(Boolean);
+  // address_line1 can already be the city for city-level results — avoid "Dallas, Dallas, TX"
+  return parts.filter((p, i) => parts.indexOf(p) === i).join(', ');
+}
+
+function hideAddrDropdown() {
+  addrDropdown.classList.remove('show');
+  addrDropdown.innerHTML = '';
+  addrAcResults = [];
+  addrAcActiveIndex = -1;
+  addrAcActiveInputId = null;
+}
+function positionAddrDropdown(input) {
+  const r = input.getBoundingClientRect();
+  addrDropdown.style.left = (r.left + window.scrollX) + 'px';
+  addrDropdown.style.top = (r.bottom + window.scrollY + 4) + 'px';
+  addrDropdown.style.width = r.width + 'px';
+}
+function selectAddr(input, result) {
+  input.value = formatAddr(result);
+  hideAddrDropdown();
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+function renderAddrDropdown(input) {
+  addrDropdown.innerHTML = '';
+  if (addrAcResults.length === 0) { hideAddrDropdown(); return; }
+  addrAcResults.forEach((res, i) => {
+    const item = document.createElement('div');
+    item.className = 'emp-ac-item' + (i === addrAcActiveIndex ? ' active' : '');
+    item.setAttribute('role', 'option');
+    item.innerHTML = '<div class="n"></div><div class="d"></div>';
+    item.querySelector('.n').textContent = res.address_line1 || formatAddr(res);
+    item.querySelector('.d').textContent = res.address_line2 || '';
+    item.onmousedown = (e) => { e.preventDefault(); selectAddr(input, res); };
+    addrDropdown.appendChild(item);
+  });
+  positionAddrDropdown(input);
+  addrDropdown.classList.add('show');
+}
+
+async function searchAddresses(text) {
+  if (addrAcController) addrAcController.abort();
+  addrAcController = new AbortController();
+  const url = 'https://api.geoapify.com/v1/geocode/autocomplete'
+    + '?text=' + encodeURIComponent(text)
+    + '&filter=' + encodeURIComponent(ADDR_AC_FILTER)
+    + '&limit=' + ADDR_AC_LIMIT
+    + '&format=json'
+    + '&apiKey=' + encodeURIComponent(GEOAPIFY_API_KEY);
+  const res = await fetch(url, { signal: addrAcController.signal });
+  if (!res.ok) throw new Error('Address search failed: ' + res.status);
+  const json = await res.json();
+  return Array.isArray(json.results) ? json.results : [];
+}
+
+document.addEventListener('input', (e) => {
+  const input = e.target;
+  if (!isAddrField(input)) return;
+  input.setAttribute('autocomplete', 'off'); // keep the browser's own autofill list from covering ours
+  clearTimeout(addrAcTimer);
+  const text = input.value.trim();
+  addrAcActiveInputId = input.id;
+  if (text.length < ADDR_AC_MIN_CHARS) { hideAddrDropdown(); return; }
+  addrAcTimer = setTimeout(async () => {
+    try {
+      const results = await searchAddresses(text);
+      if (addrAcActiveInputId !== input.id || document.activeElement !== input) return;
+      addrAcResults = results;
+      addrAcActiveIndex = -1;
+      renderAddrDropdown(input);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      // Fail quietly — the field still works as a normal text box.
+      console.warn('Address autocomplete error:', err);
+      hideAddrDropdown();
+    }
+  }, ADDR_AC_DEBOUNCE_MS);
+});
+document.addEventListener('keydown', (e) => {
+  if (!addrDropdown.classList.contains('show')) return;
+  const input = document.getElementById(addrAcActiveInputId);
+  if (!input || document.activeElement !== input) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    addrAcActiveIndex = Math.min(addrAcActiveIndex + 1, addrAcResults.length - 1);
+    renderAddrDropdown(input);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    addrAcActiveIndex = Math.max(addrAcActiveIndex - 1, 0);
+    renderAddrDropdown(input);
+  } else if (e.key === 'Enter') {
+    if (addrAcActiveIndex >= 0 && addrAcResults[addrAcActiveIndex]) {
+      e.preventDefault();
+      selectAddr(input, addrAcResults[addrAcActiveIndex]);
+    }
+  } else if (e.key === 'Escape') {
+    hideAddrDropdown();
+  }
+});
+document.addEventListener('focusout', (e) => {
+  if (e.target.id && e.target.id === addrAcActiveInputId) {
+    setTimeout(() => { if (!addrDropdown.matches(':hover')) hideAddrDropdown(); }, 120);
+  }
+});
+window.addEventListener('scroll', () => { if (addrAcActiveInputId) hideAddrDropdown(); }, true);
+window.addEventListener('resize', () => { if (addrAcActiveInputId) hideAddrDropdown(); });
+
 /* ========= Init ========= */
 renderEmployeeInjuryBlocks();
 renderThirdPartyInjuryBlocks();

@@ -1765,8 +1765,8 @@ async function submitReport() {
    A console warning fires if a record has no recognizable name field, so a mismatch
    is easy to spot while testing. */
 const EMPLOYEE_SEARCH_ENDPOINT = 'https://default0c07cc35444246a2a2b1a250d653b9.2f.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/25/workflows/2936480bf8b342459fe47cb172b955ff/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=Z2TXUOMAuZE7FHjhT1_-oQrvkVLL69rjUIuVrpG38Iw';
-const EMP_SEARCH_MIN_CHARS = 2;
-const EMP_SEARCH_DEBOUNCE_MS = 300;
+const EMP_SEARCH_MIN_CHARS = 3;
+const EMP_SEARCH_DEBOUNCE_MS = 400;
 // Set true to bypass the live flow and search this local list instead — handy for testing
 // the UI before/without hitting the real endpoint.
 const EMP_SEARCH_USE_MOCK = false;
@@ -1827,7 +1827,6 @@ function normalizeEmployee(rec) {
   return { id, name, supervisor, department, hasAddress, hasPhone, hasEmail, _raw: rec };
 }
 
-let empSearchController = null;
 let empSearchTimer = null;
 let empSearchResults = [];
 let empSearchActiveIndex = -1;
@@ -1876,10 +1875,14 @@ function renderEmpDropdown(input, opts = {}) {
   empDropdown.classList.add('show');
 }
 
-async function searchEmployees(query) {
-  if (empSearchController) empSearchController.abort();
-  empSearchController = new AbortController();
+// In-flight searches are NOT aborted when a newer one starts. Aborting closes the
+// connection before the "Employee Search" flow can send its Response, which Power
+// Automate logs as a failed run ("ActionResponseTimedOut" / 504) even though the flow
+// finished in about a second. Instead each search gets a sequence number and only the
+// newest one's results are shown; older responses are simply ignored when they arrive.
+let empSearchSeq = 0;
 
+async function searchEmployees(query) {
   if (EMP_SEARCH_USE_MOCK) {
     const q = query.toLowerCase();
     return EMP_SEARCH_MOCK.filter(e => e.name.toLowerCase().includes(q)).map(normalizeEmployee);
@@ -1888,8 +1891,7 @@ async function searchEmployees(query) {
   const res = await fetch(EMPLOYEE_SEARCH_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ searchTerm: query }),
-    signal: empSearchController.signal
+    body: JSON.stringify({ searchTerm: query })
   });
   if (!res.ok) throw new Error('Employee search failed: ' + res.status);
   const json = await res.json();
@@ -1915,16 +1917,20 @@ function onEmpNameInput(e) {
   if (query.length < EMP_SEARCH_MIN_CHARS) { hideEmpDropdown(); return; }
 
   empSearchTimer = setTimeout(async () => {
+    const seq = ++empSearchSeq;
+    // A newer search started, the user moved to another field, or the text changed
+    // while this one was in flight — drop the stale result.
+    const isStale = () => seq !== empSearchSeq || empSearchActiveInputId !== input.id || input.value.trim() !== query;
     try {
       const results = await searchEmployees(query);
-      if (empSearchActiveInputId !== input.id) return; // user moved to a different field
+      if (isStale()) return;
       empSearchResults = results.slice(0, 8);
       empSearchActiveIndex = -1;
       renderEmpDropdown(input);
     } catch (err) {
-      if (err.name === 'AbortError') return;
+      if (isStale()) return;
       console.warn('Employee search error:', err);
-      if (empSearchActiveInputId === input.id) renderEmpDropdown(input, { error: true });
+      renderEmpDropdown(input, { error: true });
     }
   }, EMP_SEARCH_DEBOUNCE_MS);
 }
